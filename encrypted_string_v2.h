@@ -105,8 +105,8 @@ namespace strenc::v2 {
 #endif
 
 // FNV-1a constants
-constexpr std::uint32_t FNV_OFFSET_BASIS = 2166136261u;
-constexpr std::uint32_t FNV_PRIME = 16777619u;
+constexpr std::uint32_t FNV_OFFSET_BASIS = 2166136261U;
+constexpr std::uint32_t FNV_PRIME = 16777619U;
 
 // ============================================================================
 // Core Crypto Primitives
@@ -114,21 +114,21 @@ constexpr std::uint32_t FNV_PRIME = 16777619u;
 
 // constexpr rotate-left (32-bit) with UB protection
 constexpr std::uint32_t rotl32(const std::uint32_t v, const std::uint32_t r) noexcept {
-    const std::uint32_t masked_r = r & 31u;
-    return (masked_r != 0u) ? ((v << masked_r) | (v >> (32u - masked_r))) : v;
+    const std::uint32_t masked_r = r & 31U;
+    return (masked_r != 0U) ? ((v << masked_r) | (v >> (32U - masked_r))) : v;
 }
 
 // constexpr rotate-right (32-bit)
 constexpr std::uint32_t rotr32(const std::uint32_t v, const std::uint32_t r) noexcept {
-    const std::uint32_t masked_r = r & 31u;
-    return (masked_r != 0u) ? ((v >> masked_r) | (v << (32u - masked_r))) : v;
+    const std::uint32_t masked_r = r & 31U;
+    return (masked_r != 0U) ? ((v >> masked_r) | (v << (32U - masked_r))) : v;
 }
 
 // FNV-1a hash (constexpr)
 constexpr std::uint32_t fnv1a_hash(const char* const s, const std::size_t n) noexcept {
     std::uint32_t hash_value = FNV_OFFSET_BASIS;
-    for (std::size_t idx = 0u; idx < n; ++idx) {
-        const std::uint32_t char_val = static_cast<std::uint32_t>(static_cast<std::uint8_t>(s[idx]));
+    for (std::size_t idx = 0U; idx < n; ++idx) {
+        const std::uint32_t char_val = static_cast<std::uint32_t>(static_cast<unsigned char>(s[idx]));
         hash_value = (hash_value ^ char_val) * FNV_PRIME;
     }
     return hash_value;
@@ -141,11 +141,14 @@ constexpr std::uint8_t encrypt_byte(
     const std::uint32_t key2,
     const std::size_t idx) noexcept {
 
-    const std::uint32_t k1 = (rotl32(key1, idx) + idx) & 0xFFu;
+    const std::uint32_t temp1 = rotl32(key1, idx) + idx;
+    const std::uint8_t k1 = static_cast<std::uint8_t>(temp1 & 0xFFU);
     const std::uint8_t layer1 = in ^ k1;
 
 #if STRENC_MULTI_LAYER
-    const std::uint32_t k2 = (rotr32(key2, idx) + (idx * 2u)) & 0xFFu;
+    const std::uint32_t idx2 = idx * 2U;
+    const std::uint32_t temp2 = rotr32(key2, idx) + idx2;
+    const std::uint8_t k2 = static_cast<std::uint8_t>(temp2 & 0xFFU);
     return layer1 ^ k2;
 #else
     (void)key2;
@@ -161,14 +164,17 @@ constexpr std::uint8_t decrypt_byte(
     const std::size_t idx) noexcept {
 
 #if STRENC_MULTI_LAYER
-    const std::uint32_t k2 = (rotr32(key2, idx) + (idx * 2u)) & 0xFFu;
+    const std::uint32_t idx2 = idx * 2U;
+    const std::uint32_t temp2 = rotr32(key2, idx) + idx2;
+    const std::uint8_t k2 = static_cast<std::uint8_t>(temp2 & 0xFFU);
     const std::uint8_t layer1 = enc ^ k2;
 #else
     (void)key2;
     const std::uint8_t layer1 = enc;
 #endif
 
-    const std::uint32_t k1 = (rotl32(key1, idx) + idx) & 0xFFu;
+    const std::uint32_t temp1 = rotl32(key1, idx) + idx;
+    const std::uint8_t k1 = static_cast<std::uint8_t>(temp1 & 0xFFU);
     return layer1 ^ k1;
 }
 
@@ -179,24 +185,27 @@ constexpr std::uint8_t decrypt_byte(
 // Derive runtime key component from environment
 [[maybe_unused]] inline std::uint32_t derive_runtime_key() noexcept {
 #if STRENC_RT_KEY
-    std::uint32_t rt_key = 0u;
+    std::uint32_t rt_key = 0U;
 
     const std::uint32_t pid_val = static_cast<std::uint32_t>(STRENC_GET_PID());
     rt_key ^= pid_val;
 
     const std::uint64_t tid_val = STRENC_GET_TID();
-    rt_key ^= static_cast<std::uint32_t>(tid_val) << 16u;
+    const std::uint32_t tid_shifted = static_cast<std::uint32_t>(tid_val) << 16U;
+    rt_key ^= tid_shifted;
 
     const auto now = std::chrono::high_resolution_clock::now();
     const auto ts = now.time_since_epoch().count();
-    rt_key ^= static_cast<std::uint32_t>(ts & 0xFFFFFFFFu);
+    const std::uint64_t ts_u64 = static_cast<std::uint64_t>(ts);
+    rt_key ^= static_cast<std::uint32_t>(ts_u64 & 0xFFFFFFFFU);
 
     const std::uintptr_t stack_addr = reinterpret_cast<std::uintptr_t>(&rt_key);
-    rt_key ^= static_cast<std::uint32_t>(stack_addr & 0xFFFFFFFFu);
+    const std::uint32_t addr_masked = static_cast<std::uint32_t>(stack_addr & 0xFFFFFFFFU);
+    rt_key ^= addr_masked;
 
     return rt_key;
 #else
-    return 0u;
+    return 0U;
 #endif
 }
 
@@ -214,14 +223,16 @@ constexpr DualKeys default_compile_unit_keys(
     const char* const time_str,
     const std::int32_t counter) noexcept {
 
-    const std::uint32_t file_len = std::char_traits<char>::length(file);
-    const std::uint32_t time_len = std::char_traits<char>::length(time_str);
-    const std::uint32_t h1 = fnv1a_hash(file, static_cast<std::size_t>(file_len));
-    const std::uint32_t h2 = fnv1a_hash(time_str, static_cast<std::size_t>(time_len));
+    const std::size_t file_len = static_cast<std::size_t>(std::char_traits<char>::length(file));
+    const std::size_t time_len = static_cast<std::size_t>(std::char_traits<char>::length(time_str));
+    const std::uint32_t h1 = fnv1a_hash(file, file_len);
+    const std::uint32_t h2 = fnv1a_hash(time_str, time_len);
 
     const std::uint32_t counter_val = static_cast<std::uint32_t>(counter);
-    const std::uint32_t key1 = h1 ^ (counter_val * 0x9e3779b9u);
-    const std::uint32_t key2 = h2 ^ ((counter_val + 1u) * 0x9e3779b9u);
+    const std::uint32_t mult1 = counter_val * 0x9E3779B9U;
+    const std::uint32_t mult2 = (counter_val + 1U) * 0x9E3779B9U;
+    const std::uint32_t key1 = h1 ^ mult1;
+    const std::uint32_t key2 = h2 ^ mult2;
 
     return DualKeys{key1, key2};
 }
@@ -232,7 +243,7 @@ constexpr DualKeys default_compile_unit_keys(
 
 template <std::size_t N>
 struct EncryptedStringV2 {
-    static_assert(N >= 1u, "String literal must have at least null terminator");
+    static_assert(N >= 1U, "String literal must have at least null terminator");
 
     std::array<std::uint8_t, N> data_;
     std::size_t size_;
@@ -240,18 +251,19 @@ struct EncryptedStringV2 {
     std::uint32_t compile_hash_;
 
     constexpr explicit EncryptedStringV2(const char (&s)[N], const DualKeys& keys)
-        : data_{}, size_(N - 1u), compile_keys_(keys), compile_hash_(0u) {
+        : data_{}, size_(N - 1U), compile_keys_(keys), compile_hash_(0U) {
 
 #if STRENC_ENABLED
-        for (std::size_t idx = 0u; idx < N; ++idx) {
+        for (std::size_t idx = 0U; idx < N; ++idx) {
             data_[idx] = encrypt_byte(static_cast<std::uint8_t>(s[idx]), keys.key1, keys.key2, idx);
         }
 
-        for (std::size_t idx = 0u; idx < N; ++idx) {
-            compile_hash_ = (compile_hash_ * 31u) + data_[idx];
+        for (std::size_t idx = 0U; idx < N; ++idx) {
+            const std::uint32_t temp = compile_hash_ * 31U;
+            compile_hash_ = temp + data_[idx];
         }
 #else
-        for (std::size_t idx = 0u; idx < N; ++idx) {
+        for (std::size_t idx = 0U; idx < N; ++idx) {
             data_[idx] = static_cast<std::uint8_t>(s[idx]);
         }
 #endif
@@ -267,9 +279,10 @@ struct EncryptedStringV2 {
 
     [[maybe_unused]] bool check_integrity() const {
 #if STRENC_ENABLED
-        std::uint32_t hash = 0u;
-        for (std::size_t idx = 0u; idx < data_.size(); ++idx) {
-            hash = (hash * 31u) + data_[idx];
+        std::uint32_t hash = 0U;
+        for (std::size_t idx = 0U; idx < data_.size(); ++idx) {
+            const std::uint32_t temp = hash * 31U;
+            hash = temp + data_[idx];
         }
         return hash == compile_hash_;
 #else
@@ -282,7 +295,7 @@ struct EncryptedStringV2 {
 // RAII Decryption Guard with Secure Zeroing
 // ============================================================================
 
-template <std::size_t N = 256u>
+template <std::size_t N = 256U>
 class DecryptGuardV2 {
 public:
     explicit DecryptGuardV2(
@@ -292,10 +305,9 @@ public:
         : len_(len), compile_keys_(compile_keys), rt_key_(derive_runtime_key()) {
 
 #if STRENC_ENABLED
-        for (std::size_t idx = 0u; idx < len; ++idx) {
-            buf_[idx] = static_cast<char>(
-                decrypt_byte(enc_data[idx], compile_keys_.key1, compile_keys_.key2, idx)
-            );
+        for (std::size_t idx = 0U; idx < len; ++idx) {
+            const std::uint8_t decrypted = decrypt_byte(enc_data[idx], compile_keys_.key1, compile_keys_.key2, idx);
+            buf_[idx] = static_cast<char>(decrypted);
         }
 #else
         std::memcpy(buf_, enc_data, len);
@@ -326,14 +338,14 @@ private:
     const std::size_t len_;
     const DualKeys compile_keys_;
     [[maybe_unused]] const std::uint32_t rt_key_;
-    char buf_[N + 1u];
+    char buf_[N + 1U];
 
     void secure_zero() noexcept {
         volatile char* p = buf_;
 
-        for (std::size_t pass = 0u; pass < 3u; ++pass) {
-            const char pattern = (pass == 1u) ? static_cast<char>(0xAA) : 0;
-            for (std::size_t idx = 0u; idx < (len_ + 1u); ++idx) {
+        for (std::size_t pass = 0U; pass < 3U; ++pass) {
+            const char pattern = (pass == 1U) ? static_cast<char>(0xAA) : 0;
+            for (std::size_t idx = 0U; idx < (len_ + 1U); ++idx) {
                 p[idx] = pattern;
             }
         }
@@ -369,7 +381,7 @@ private:
 
 // Decrypt with custom variable name
 #define AUTO_DECRYPT_VAR_V2(var_name, enc) \
-    strenc::v2::DecryptGuardV2<256u> var_name((enc).data(), (enc).size(), (enc).compile_keys_)
+    strenc::v2::DecryptGuardV2<256U> var_name((enc).data(), (enc).size(), (enc).compile_keys_)
 
 // Decrypt with default _dec_ variable name
 #define AUTO_DECRYPT_V2(enc) AUTO_DECRYPT_VAR_V2(_dec_, enc)

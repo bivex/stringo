@@ -27,9 +27,9 @@
 #define DEFINE_ENC_TEST(name, literal) \
     void test_##name() { \
         constexpr auto enc = ENC_STR(literal); \
-        constexpr std::size_t literal_len = sizeof(literal) - 1u; \
+        constexpr std::size_t literal_len = sizeof(literal) - 1U; \
         \
-        if (literal_len > 0u) { \
+        if (literal_len > 0U) { \
             const bool obf = enc.is_obfuscated_against(literal, literal_len); \
             if (!obf) { \
                 std::cerr << "FAILED: String must be obfuscated in binary" << std::endl; \
@@ -38,7 +38,7 @@
         } \
         \
         { \
-            strenc::DecryptGuard<256u> g(enc.data(), enc.size(), enc.key_); \
+            strenc::DecryptGuard<256U> g(enc.data(), enc.size(), enc.key_); \
             const int cmp_result = std::strcmp(g.c_str(), literal); \
             if (cmp_result != 0) { \
                 std::cerr << "FAILED: Decrypted value must match original" << std::endl; \
@@ -46,7 +46,7 @@
             } \
         } \
         \
-        if (literal_len > 0u) { \
+        if (literal_len > 0U) { \
             const bool obf2 = enc.is_obfuscated_against(literal, literal_len); \
             if (!obf2) { \
                 std::cerr << "FAILED: Encrypted data must remain obfuscated" << std::endl; \
