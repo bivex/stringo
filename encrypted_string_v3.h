@@ -10,13 +10,59 @@
  * 3. **On-the-fly de-obfuscation** - only de-obfuscates when accessing data
  * 4. **No plaintext in memory** - decrypted bytes are always obfuscated
  *
- * @par Usage:
+ * @par Usage Example (Full Demo):
  * @code
- *   constexpr auto enc = ENC_STR_V3("Secret");
- *   AUTO_DECRYPT_V3(enc);
- *   std::cout << _dec_.c_str();  // De-obfuscates and returns plaintext
- *   // Memory still contains obfuscated data
+ *   #include "encrypted_string_v3.h"
+ *   #include <iostream>
+ *
+ *   int main() {
+ *       // 1. Create encrypted string at compile time
+ *       constexpr auto password = ENC_STR_V3("MySecretPassword123");
+ *
+ *       // 2. Decrypt with stack allocation + memory obfuscation (recommended)
+ *       {
+ *           AUTO_DECRYPT_V3(password);
+ *           std::cout << "Password: " << _dec_.c_str() << std::endl;
+ *           // Memory contains obfuscated data (XORed with runtime key)
+ *       } // Buffer is securely zeroed here
+ *
+ *       // 3. Custom variable name
+ *       {
+ *           AUTO_DECRYPT_VAR_V3(decrypted, password);
+ *           std::string s = decrypted.string(); // Creates std::string copy
+ *           std::cout << "Decrypted: " << s << std::endl;
+ *       }
+ *
+ *       // 4. Fast version (no memory obfuscation, slightly faster)
+ *       {
+ *           AUTO_DECRYPT_V3_FAST(password);
+ *           std::cout << "Fast: " << _dec_.c_str() << std::endl;
+ *       }
+ *
+ *       // 5. Check allocation type
+ *       {
+ *           AUTO_DECRYPT_VAR_V3(guard, password);
+ *           if (guard.is_on_stack()) {
+ *               std::cout << "Using stack allocation" << std::endl;
+ *           } else {
+ *               std::cout << "Using heap allocation" << std::endl;
+ *           }
+ *       }
+ *
+ *       // 6. Get runtime key for debugging
+ *       {
+ *           AUTO_DECRYPT_VAR_V3(guard, password);
+ *           std::cout << "Runtime key: 0x" << std::hex << guard.runtime_key() << std::dec << std::endl;
+ *       }
+ *
+ *       return 0;
+ *   }
  * @endcode
+ *
+ * @par Configuration Options:
+ * - STRENC_STACK_THRESHOLD: Stack allocation threshold (default 64 bytes)
+ * - STRENC_MEM_OBFUSCATE: Enable memory obfuscation (default 1)
+ * - DISABLE_STR_ENC: Disable encryption for debugging
  */
 
 #ifndef STRENC_ENCRYPTED_STRING_V3_H
