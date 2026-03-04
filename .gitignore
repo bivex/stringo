@@ -200,3 +200,13 @@ results/
 # =============================================================================
 benchmark_results/
 *.bench
+
+.claude/skills/scitools-understand/
+
+.claude/skills/compliance-checker/
+
+compliance_output/misra/
+
+.claude/skills/architecture-analyzer/
+
+stringo.und/

@@ -53,149 +53,162 @@
  * Fully thread-safe - decryption is local to each scope with no global state.
  */
 
-#pragma once
+#ifndef STRENC_ENCRYPTED_STRING_H
+#define STRENC_ENCRYPTED_STRING_H
+
 #include <cstdint>
 #include <cstddef>
 #include <array>
 #include <string>
 #include <cstring>
-#include <memory>
 
 namespace strenc {
 
 // Debug mode check
 #ifndef DISABLE_STR_ENC
-    #define STRENC_ENABLED 1
+    constexpr std::int32_t STRENC_ENABLED = 1;
 #else
-    #define STRENC_ENABLED 0
+    constexpr std::int32_t STRENC_ENABLED = 0;
 #endif
 
 // constexpr rotate-left (32-bit)
-constexpr uint32_t rotl32(uint32_t v, unsigned int r) {
-    r &= 31;  // Ensure r is in [0, 31] to avoid UB when r == 0 or r == 32
-    return r ? (v << r) | (v >> (32 - r)) : v;
+constexpr std::uint32_t rotl32(std::uint32_t v, std::uint32_t r) {
+    r &= 31u;
+    return (r != 0u) ? ((v << r) | (v >> (32u - r))) : v;
 }
 
-// простая constexpr-хэш-функция от строки (можно заменить на любую)
-constexpr uint32_t constexpr_hash(const char* s, size_t n) {
-    uint32_t h = 2166136261u;
-    for (size_t i = 0; i < n; ++i) {
-        h = (h ^ static_cast<uint32_t>(s[i])) * 16777619u;
+// constexpr hash function from string
+constexpr std::uint32_t constexpr_hash(const char* s, std::size_t n) {
+    std::uint32_t h = 2166136261u;
+    for (std::size_t i = 0u; i < n; ++i) {
+        h = (h ^ static_cast<std::uint32_t>(static_cast<std::uint8_t>(s[i]))) * 16777619u;
     }
     return h;
 }
 
-// Шифрование: out[i] = in[i] ^ (rotl32(key, i) + i) (аналогично найденному в репо)
-template <size_t N>
+// Encryption: out[i] = in[i] ^ (rotl32(key, i) + i)
+template <std::size_t N>
 struct EncryptedString {
-    static_assert(N >= 1, "String literal must have at least null terminator");
-    // data_ хранит зашифрованные байты, включая завершающий нулевой
-    std::array<uint8_t, N> data_;
-    size_t size_; // = N-1 (без нуля), для "" будет 0
-    uint32_t key_;
+    static_assert(N >= 1u, "String literal must have at least null terminator");
 
-    // constexpr-конструктор: заполняет data_ зашифрованным содержимым
-    constexpr EncryptedString(const char (&s)[N], uint32_t key) : data_{}, size_(N - 1), key_(key) {
+    std::array<std::uint8_t, N> data_;
+    std::size_t size_;
+    std::uint32_t key_;
+
+    constexpr EncryptedString(const char (&s)[N], std::uint32_t key)
+        : data_{}, size_(N - 1u), key_(key) {
+
 #if STRENC_ENABLED
-        // Encryption enabled: obfuscate the string
-        for (size_t i = 0; i < N; ++i) {
-            uint8_t b = static_cast<uint8_t>(s[i]);
-            uint8_t kbyte = static_cast<uint8_t>((rotl32(key, static_cast<unsigned int>(i)) + static_cast<unsigned int>(i)) & 0xFFu);
-            data_[i] = static_cast<uint8_t>(b ^ kbyte);
+        for (std::size_t i = 0u; i < N; ++i) {
+            const std::uint8_t b = static_cast<std::uint8_t>(s[i]);
+            const std::uint8_t kbyte = static_cast<std::uint8_t>((rotl32(key, i) + i) & 0xFFu);
+            data_[i] = b ^ kbyte;
         }
 #else
-        // Debug mode: store plaintext (no encryption)
-        for (size_t i = 0; i < N; ++i) {
-            data_[i] = static_cast<uint8_t>(s[i]);
+        for (std::size_t i = 0u; i < N; ++i) {
+            data_[i] = static_cast<std::uint8_t>(s[i]);
         }
 #endif
     }
 
-    constexpr size_t size() const noexcept { return size_; }
-    constexpr const uint8_t* data() const noexcept { return data_.data(); }
+    constexpr std::size_t size() const noexcept {
+        return size_;
+    }
 
-    // Проверка: raw байты не совпадают с оригиналом (без расшифровки)
-    bool is_obfuscated_against(const char* orig, size_t orig_len) const {
+    constexpr const std::uint8_t* data() const noexcept {
+        return data_.data();
+    }
+
+    bool is_obfuscated_against(const char* orig, std::size_t orig_len) const {
 #if STRENC_ENABLED
-        if (orig_len != size_) return true; // mismatch lengths -> ok (not equal)
-        for (size_t i = 0; i < size_; ++i) {
-            // Сравниваем raw encrypted байт с оригинальным plaintext
-            if (data_[i] != static_cast<uint8_t>(orig[i])) return true; // differs -> obfuscated
+        if (orig_len != size_) {
+            return true;
         }
-        return false; // all bytes equal -> NOT obfuscated (bad!)
+        for (std::size_t i = 0u; i < size_; ++i) {
+            if (data_[i] != static_cast<std::uint8_t>(orig[i])) {
+                return true;
+            }
+        }
+        return false;
 #else
-        (void)orig; (void)orig_len;
-        return true; // Debug mode: always return "obfuscated" to skip tests
+        (void)orig;
+        (void)orig_len;
+        return true;
 #endif
     }
 };
 
-// Функция создания ключа: можно взять constexpr_hash(__TIME__) ^ __COUNTER__ и т.д.
-// Здесь - простая фабрика: позволяет тестир��вать deterministically
-constexpr uint32_t default_compile_unit_key(const char* file, const char* time, int counter) {
-    // combine file/time/counter
-    uint32_t h1 = constexpr_hash(file, std::char_traits<char>::length(file));
-    uint32_t h2 = constexpr_hash(time, std::char_traits<char>::length(time));
-    return h1 ^ h2 ^ static_cast<uint32_t>(counter * 0x9e3779b9u);
+// Key generation factory
+constexpr std::uint32_t default_compile_unit_key(const char* file, const char* time, std::int32_t counter) {
+    const std::uint32_t h1 = constexpr_hash(file, std::char_traits<char>::length(file));
+    const std::uint32_t h2 = constexpr_hash(time, std::char_traits<char>::length(time));
+    return h1 ^ h2 ^ static_cast<std::uint32_t>(counter * 0x9e3779b9);
 }
 
-// Guard: дешифрует в локальный буфер (heap), очищает при уничтожении
+// Decryption result structure (stack-allocated to avoid dynamic memory)
+template <std::size_t N = 256u>
 class DecryptGuard {
 public:
-    DecryptGuard(const uint8_t* enc_data, size_t len, uint32_t key)
-        : len_(len), key_(key), buf_(new char[len + 1]) {
+    DecryptGuard(const std::uint8_t* const enc_data, const std::size_t len, const std::uint32_t key)
+        : len_(len), key_(key) {
+
 #if STRENC_ENABLED
-        // Encryption enabled: decrypt the data
-        for (size_t i = 0; i < len; ++i) {
-            uint8_t kbyte = static_cast<uint8_t>((rotl32(key_, static_cast<unsigned int>(i)) + static_cast<unsigned int>(i)) & 0xFFu);
+        for (std::size_t i = 0u; i < len; ++i) {
+            const std::uint8_t kbyte = static_cast<std::uint8_t>((rotl32(key_, i) + i) & 0xFFu);
             buf_[i] = static_cast<char>(enc_data[i] ^ kbyte);
         }
 #else
-        // Debug mode: copy plaintext (no decryption needed)
-        for (size_t i = 0; i < len; ++i) {
+        for (std::size_t i = 0u; i < len; ++i) {
             buf_[i] = static_cast<char>(enc_data[i]);
         }
 #endif
         buf_[len] = '\0';
     }
+
     ~DecryptGuard() {
-        // secure zero
-        volatile char* p = buf_.get();
-        for (size_t i = 0; i < len_; ++i) p[i] = 0;
-        // unique_ptr will free
+        secure_zero();
     }
-    const char* c_str() const noexcept { return buf_.get(); }
-    std::string string() const { return std::string(buf_.get()); }
+
+    DecryptGuard(const DecryptGuard&) = delete;
+    DecryptGuard& operator=(const DecryptGuard&) = delete;
+
+    const char* c_str() const noexcept {
+        return buf_;
+    }
+
+    std::string string() const {
+        return std::string(buf_);
+    }
+
 private:
-    size_t len_;
-    [[maybe_unused]] uint32_t key_;  // Used only when STRENC_ENABLED
-    std::unique_ptr<char[]> buf_;
+    std::size_t len_;
+    std::uint32_t key_;
+    char buf_[N + 1u];
+
+    void secure_zero() {
+        for (std::size_t i = 0u; i < len_ + 1u; ++i) {
+            buf_[i] = 0;
+        }
+    }
 };
 
-// Утилиты макросов
 } // namespace strenc
 
-// Вспомогательные макросы для именования
-#define STRENC_CONCAT_IMPL(a,b) a##b
-#define STRENC_CONCAT(a,b) STRENC_CONCAT_IMPL(a,b)
+// ============================================================================
+// Public API macros (minimal, only necessary ones)
+// ============================================================================
 
-// Макросы:
-// ENC_STR(lit) - создаёт constexpr EncryptedString в текущем TU.
-// Формирование ключа: комбинация __FILE__ и __TIME__ и __COUNTER__ (возможен детерминизм).
-#define STRENC_COMPUTE_KEY() (strenc::default_compile_unit_key(__FILE__, __TIME__, __COUNTER__))
-
+// Create encrypted string at compile time
 #define ENC_STR(lit) \
     ([]() constexpr -> strenc::EncryptedString<sizeof(lit)> { \
-        return strenc::EncryptedString<sizeof(lit)>(lit, STRENC_COMPUTE_KEY()); \
+        return strenc::EncryptedString<sizeof(lit)>(lit, strenc::default_compile_unit_key(__FILE__, __TIME__, __COUNTER__)); \
     }())
 
-// Создаёт guard с указанным именем переменной для доступа к расшифрованной строке
-// Использование: AUTO_DECRYPT_VAR(my_var, enc); std::cout << my_var.c_str();
+// Create decryption guard with custom variable name
 #define AUTO_DECRYPT_VAR(var_name, enc) \
-    strenc::DecryptGuard STRENC_CONCAT(_strenc_guard_, __LINE__)((enc).data(), (enc).size(), (enc).key_); \
-    strenc::DecryptGuard& var_name = STRENC_CONCAT(_strenc_guard_, __LINE__)
+    strenc::DecryptGuard<256u> var_name((enc).data(), (enc).size(), (enc).key_)
 
-// Упрощённый макрос: создаёт переменную _dec_ в текущей области видимости
-// Использование: AUTO_DECRYPT(enc); std::cout << _dec_.c_str();
-// ВНИМАНИЕ: не используйте AUTO_DECRYPT более одного раза в одной области видимости!
+// Create decryption guard with default name _dec_
 #define AUTO_DECRYPT(enc) AUTO_DECRYPT_VAR(_dec_, enc)
+
+#endif // STRENC_ENCRYPTED_STRING_H

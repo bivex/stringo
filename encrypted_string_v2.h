@@ -53,16 +53,17 @@
  * - Define STRENC_NO_RT_KEY to disable runtime key derivation (less secure)
  */
 
-#pragma once
+#ifndef STRENC_ENCRYPTED_STRING_V2_H
+#define STRENC_ENCRYPTED_STRING_V2_H
+
 #include <cstdint>
 #include <cstddef>
 #include <array>
 #include <string>
 #include <cstring>
-#include <memory>
 #include <chrono>
 #include <thread>
-#include <random>
+#include <atomic>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -72,34 +73,35 @@
     #include <unistd.h>
     #include <pthread.h>
     #define STRENC_GET_PID() getpid()
-    #define STRENC_GET_TID() (uint64_t)pthread_self()
+    #define STRENC_GET_TID() static_cast<std::uint64_t>(pthread_self())
 #else
     #include <unistd.h>
     #include <sys/types.h>
+    #include <sys/syscall.h>
     #define STRENC_GET_PID() getpid()
-    #define STRENC_GET_TID() syscall(__NR_gettid)
+    #define STRENC_GET_TID() static_cast<std::uint64_t>(static_cast<std::int32_t>(syscall(SYS_gettid)))
 #endif
 
 namespace strenc::v2 {
 
 // Debug mode check
 #ifndef DISABLE_STR_ENC
-    #define STRENC_ENABLED 1
+    constexpr std::int32_t STRENC_ENABLED = 1;
 #else
-    #define STRENC_ENABLED 0
+    constexpr std::int32_t STRENC_ENABLED = 0;
 #endif
 
 // Configuration
 #ifndef STRENC_SINGLE_LAYER
-    #define STRENC_MULTI_LAYER 1  // Enable multi-layer encryption
+    constexpr std::int32_t STRENC_MULTI_LAYER = 1;
 #else
-    #define STRENC_MULTI_LAYER 0
+    constexpr std::int32_t STRENC_MULTI_LAYER = 0;
 #endif
 
 #ifndef STRENC_NO_RT_KEY
-    #define STRENC_RT_KEY 1  // Enable runtime key derivation
+    constexpr std::int32_t STRENC_RT_KEY = 1;
 #else
-    #define STRENC_RT_KEY 0
+    constexpr std::int32_t STRENC_RT_KEY = 0;
 #endif
 
 // ============================================================================
@@ -107,56 +109,51 @@ namespace strenc::v2 {
 // ============================================================================
 
 // constexpr rotate-left (32-bit) with UB protection
-constexpr uint32_t rotl32(uint32_t v, unsigned int r) {
-    r &= 31;
-    return r ? (v << r) | (v >> (32 - r)) : v;
+constexpr std::uint32_t rotl32(std::uint32_t v, std::uint32_t r) {
+    r &= 31u;
+    return (r != 0u) ? ((v << r) | (v >> (32u - r))) : v;
 }
 
 // constexpr rotate-right (32-bit)
-constexpr uint32_t rotr32(uint32_t v, unsigned int r) {
-    r &= 31;
-    return r ? (v >> r) | (v << (32 - r)) : v;
+constexpr std::uint32_t rotr32(std::uint32_t v, std::uint32_t r) {
+    r &= 31u;
+    return (r != 0u) ? ((v >> r) | (v << (32u - r))) : v;
 }
 
 // FNV-1a hash (constexpr)
-constexpr uint32_t fnv1a_hash(const char* s, size_t n) {
-    uint32_t h = 2166136261u;
-    for (size_t i = 0; i < n; ++i) {
-        h ^= static_cast<uint32_t>(s[i]);
+constexpr std::uint32_t fnv1a_hash(const char* s, std::size_t n) {
+    std::uint32_t h = 2166136261u;
+    for (std::size_t i = 0u; i < n; ++i) {
+        h ^= static_cast<std::uint32_t>(static_cast<std::uint8_t>(s[i]));
         h *= 16777619u;
     }
     return h;
 }
 
 // Multi-round encryption for single byte
-constexpr uint8_t encrypt_byte(uint8_t in, uint32_t key1, uint32_t key2, size_t idx) {
-    // Layer 1: XOR with rotating key stream 1
-    uint32_t k1 = (rotl32(key1, static_cast<unsigned int>(idx)) + idx) & 0xFFu;
-    uint8_t layer1 = in ^ static_cast<uint8_t>(k1);
+constexpr std::uint8_t encrypt_byte(std::uint8_t in, std::uint32_t key1, std::uint32_t key2, std::size_t idx) {
+    const std::uint32_t k1 = (rotl32(key1, idx) + idx) & 0xFFu;
+    const std::uint8_t layer1 = in ^ k1;
 
 #if STRENC_MULTI_LAYER
-    // Layer 2: XOR with different rotating key stream 2
-    uint32_t k2 = (rotr32(key2, static_cast<unsigned int>(idx)) + idx * 2) & 0xFFu;
-    uint8_t layer2 = layer1 ^ static_cast<uint8_t>(k2);
-    return layer2;
+    const std::uint32_t k2 = (rotr32(key2, idx) + idx * 2u) & 0xFFu;
+    return layer1 ^ k2;
 #else
     return layer1;
 #endif
 }
 
 // Multi-round decryption for single byte
-constexpr uint8_t decrypt_byte(uint8_t enc, uint32_t key1, uint32_t key2, size_t idx) {
+constexpr std::uint8_t decrypt_byte(std::uint8_t enc, std::uint32_t key1, std::uint32_t key2, std::size_t idx) {
 #if STRENC_MULTI_LAYER
-    // Layer 2: XOR with different rotating key stream 2
-    uint32_t k2 = (rotr32(key2, static_cast<unsigned int>(idx)) + idx * 2) & 0xFFu;
-    uint8_t layer1 = enc ^ static_cast<uint8_t>(k2);
+    const std::uint32_t k2 = (rotr32(key2, idx) + idx * 2u) & 0xFFu;
+    const std::uint8_t layer1 = enc ^ k2;
 #else
-    uint8_t layer1 = enc;
+    const std::uint8_t layer1 = enc;
 #endif
 
-    // Layer 1: XOR with rotating key stream 1
-    uint32_t k1 = (rotl32(key1, static_cast<unsigned int>(idx)) + idx) & 0xFFu;
-    return layer1 ^ static_cast<uint8_t>(k1);
+    const std::uint32_t k1 = (rotl32(key1, idx) + idx) & 0xFFu;
+    return layer1 ^ k1;
 }
 
 // ============================================================================
@@ -164,29 +161,23 @@ constexpr uint8_t decrypt_byte(uint8_t enc, uint32_t key1, uint32_t key2, size_t
 // ============================================================================
 
 // Derive runtime key component from environment
-inline uint32_t derive_runtime_key() {
+inline std::uint32_t derive_runtime_key() {
 #if STRENC_RT_KEY
-    // Combine multiple entropy sources
-    uint32_t rt_key = 0;
+    std::uint32_t rt_key = 0u;
 
-    // Process ID
-    rt_key ^= static_cast<uint32_t>(STRENC_GET_PID());
+    rt_key ^= static_cast<std::uint32_t>(STRENC_GET_PID());
+    rt_key ^= static_cast<std::uint32_t>(STRENC_GET_TID()) << 16u;
 
-    // Thread ID
-    rt_key ^= static_cast<uint32_t>(STRENC_GET_TID()) << 16;
+    const auto now = std::chrono::high_resolution_clock::now();
+    const auto ts = now.time_since_epoch().count();
+    rt_key ^= static_cast<std::uint32_t>(ts & 0xFFFFFFFF);
 
-    // High-resolution timestamp
-    auto now = std::chrono::high_resolution_clock::now();
-    auto ts = now.time_since_epoch().count();
-    rt_key ^= static_cast<uint32_t>(ts & 0xFFFFFFFF);
-
-    // Stack address (ASLR provides randomness)
-    void* stack_addr = &rt_key;
-    rt_key ^= static_cast<uint32_t>(reinterpret_cast<uintptr_t>(stack_addr) & 0xFFFFFFFF);
+    const std::uintptr_t stack_addr = reinterpret_cast<std::uintptr_t>(&rt_key);
+    rt_key ^= static_cast<std::uint32_t>(stack_addr & 0xFFFFFFFF);
 
     return rt_key;
 #else
-    return 0;  // No runtime component
+    return 0u;
 #endif
 }
 
@@ -194,66 +185,65 @@ inline uint32_t derive_runtime_key() {
 // Compile-time Key Generation
 // ============================================================================
 
-// Generate two independent keys for multi-layer encryption
 struct DualKeys {
-    uint32_t key1;
-    uint32_t key2;
+    std::uint32_t key1;
+    std::uint32_t key2;
 };
 
-constexpr DualKeys default_compile_unit_keys(const char* file, const char* time, int counter) {
-    uint32_t h1 = fnv1a_hash(file, std::char_traits<char>::length(file));
-    uint32_t h2 = fnv1a_hash(time, std::char_traits<char>::length(time));
+constexpr DualKeys default_compile_unit_keys(const char* file, const char* time, std::int32_t counter) {
+    const std::uint32_t h1 = fnv1a_hash(file, std::char_traits<char>::length(file));
+    const std::uint32_t h2 = fnv1a_hash(time, std::char_traits<char>::length(time));
 
-    // Generate independent keys
-    uint32_t key1 = h1 ^ static_cast<uint32_t>(counter * 0x9e3779b9u);
-    uint32_t key2 = h2 ^ static_cast<uint32_t>(counter * 0x9e3779b9u + 1);
+    const std::uint32_t key1 = h1 ^ static_cast<std::uint32_t>(counter * 0x9e3779b9);
+    const std::uint32_t key2 = h2 ^ static_cast<std::uint32_t>(counter * 0x9e3779b9 + 1);
 
-    return {key1, key2};
+    return DualKeys{key1, key2};
 }
 
 // ============================================================================
 // Encrypted String Storage
 // ============================================================================
 
-template <size_t N>
+template <std::size_t N>
 struct EncryptedStringV2 {
-    static_assert(N >= 1, "String literal must have at least null terminator");
+    static_assert(N >= 1u, "String literal must have at least null terminator");
 
-    std::array<uint8_t, N> data_;
-    size_t size_;
+    std::array<std::uint8_t, N> data_;
+    std::size_t size_;
     DualKeys compile_keys_;
-    uint32_t compile_hash_;  // For tamper detection
+    std::uint32_t compile_hash_;
 
-    constexpr EncryptedStringV2(const char (&s)[N], DualKeys keys)
-        : data_{}, size_(N - 1), compile_keys_(keys), compile_hash_(0) {
+    constexpr EncryptedStringV2(const char (&s)[N], const DualKeys& keys)
+        : data_{}, size_(N - 1u), compile_keys_(keys), compile_hash_(0u) {
 
 #if STRENC_ENABLED
-        // Multi-layer encryption
-        for (size_t i = 0; i < N; ++i) {
-            data_[i] = encrypt_byte(static_cast<uint8_t>(s[i]), keys.key1, keys.key2, i);
+        for (std::size_t i = 0u; i < N; ++i) {
+            data_[i] = encrypt_byte(static_cast<std::uint8_t>(s[i]), keys.key1, keys.key2, i);
         }
 
-        // Compute hash of encrypted data for tamper detection
-        for (size_t i = 0; i < N; ++i) {
-            compile_hash_ = (compile_hash_ * 31) + data_[i];
+        for (std::size_t i = 0u; i < N; ++i) {
+            compile_hash_ = (compile_hash_ * 31u) + data_[i];
         }
 #else
-        // Debug mode: store plaintext
-        for (size_t i = 0; i < N; ++i) {
-            data_[i] = static_cast<uint8_t>(s[i]);
+        for (std::size_t i = 0u; i < N; ++i) {
+            data_[i] = static_cast<std::uint8_t>(s[i]);
         }
 #endif
     }
 
-    constexpr size_t size() const noexcept { return size_; }
-    constexpr const uint8_t* data() const noexcept { return data_.data(); }
+    constexpr std::size_t size() const noexcept {
+        return size_;
+    }
 
-    // Tamper detection: check if encrypted data was modified
+    constexpr const std::uint8_t* data() const noexcept {
+        return data_.data();
+    }
+
     bool check_integrity() const {
 #if STRENC_ENABLED
-        uint32_t hash = 0;
-        for (size_t i = 0; i < data_.size(); ++i) {
-            hash = (hash * 31) + data_[i];
+        std::uint32_t hash = 0u;
+        for (std::size_t i = 0u; i < data_.size(); ++i) {
+            hash = (hash * 31u) + data_[i];
         }
         return hash == compile_hash_;
 #else
@@ -266,64 +256,64 @@ struct EncryptedStringV2 {
 // RAII Decryption Guard with Secure Zeroing
 // ============================================================================
 
+template <std::size_t N = 256u>
 class DecryptGuardV2 {
 public:
-    DecryptGuardV2(const uint8_t* enc_data, size_t len, DualKeys compile_keys)
-        : len_(len), compile_keys_(compile_keys), rt_key_(derive_runtime_key()),
-          buf_(new char[len + 1]) {
+    DecryptGuardV2(const std::uint8_t* const enc_data, const std::size_t len, const DualKeys& compile_keys)
+        : len_(len), compile_keys_(compile_keys), rt_key_(derive_runtime_key()) {
 
 #if STRENC_ENABLED
-        // Decrypt using compile-time keys (must match encryption!)
-        // Note: Runtime key is NOT used for decryption since encryption was compile-time
-        for (size_t i = 0; i < len; ++i) {
+        for (std::size_t i = 0u; i < len; ++i) {
             buf_[i] = static_cast<char>(
                 decrypt_byte(enc_data[i], compile_keys_.key1, compile_keys_.key2, i)
             );
         }
 #else
-        // Debug mode: copy plaintext
-        std::memcpy(buf_.get(), enc_data, len);
+        std::memcpy(buf_, enc_data, len);
 #endif
         buf_[len] = '\0';
     }
 
     ~DecryptGuardV2() {
-        // Secure zeroing with multiple passes
         secure_zero();
     }
 
-    const char* c_str() const noexcept { return buf_.get(); }
-    std::string string() const { return std::string(buf_.get()); }
+    DecryptGuardV2(const DecryptGuardV2&) = delete;
+    DecryptGuardV2& operator=(const DecryptGuardV2&) = delete;
 
-    // Get runtime key component (for debugging/testing)
-    uint32_t runtime_key() const noexcept { return rt_key_; }
+    const char* c_str() const noexcept {
+        return buf_;
+    }
+
+    std::string string() const {
+        return std::string(buf_);
+    }
+
+    std::uint32_t runtime_key() const noexcept {
+        return rt_key_;
+    }
 
 private:
-    size_t len_;
+    std::size_t len_;
     DualKeys compile_keys_;
-    uint32_t rt_key_;
-    std::unique_ptr<char[]> buf_;
+    std::uint32_t rt_key_;
+    char buf_[N + 1u];
 
     void secure_zero() {
-        // Multi-pass zeroing to prevent compiler optimizations
-        volatile char* p = buf_.get();
+        volatile char* p = buf_;
 
-        // Pass 1: Write zeros
-        for (size_t i = 0; i < len_ + 1; ++i) {
+        for (std::size_t i = 0u; i < len_ + 1u; ++i) {
             p[i] = 0;
         }
 
-        // Pass 2: Write random pattern
-        for (size_t i = 0; i < len_ + 1; ++i) {
+        for (std::size_t i = 0u; i < len_ + 1u; ++i) {
             p[i] = static_cast<char>(0xAA);
         }
 
-        // Pass 3: Final zeros
-        for (size_t i = 0; i < len_ + 1; ++i) {
+        for (std::size_t i = 0u; i < len_ + 1u; ++i) {
             p[i] = 0;
         }
 
-        // Memory barrier to prevent reordering
         std::atomic_thread_fence(std::memory_order_seq_cst);
     }
 };
@@ -332,14 +322,10 @@ private:
 // Anti-Tampering Helpers
 // ============================================================================
 
-// Verify binary integrity (call at startup)
 inline bool verify_self_integrity() {
-    // This is a basic check - in production, you'd want to verify
-    // the actual binary sections against known hashes
 #if STRENC_ENABLED && !defined(DISABLE_STRENC_INTEGRITY_CHECK)
-    // Check if we can detect basic modifications
-    volatile int dummy = 0x12345678;
-    return (dummy != 0);  // Simple sanity check
+    const volatile std::int32_t dummy = 0x12345678;
+    return (dummy != 0);
 #else
     return true;
 #endif
@@ -348,26 +334,20 @@ inline bool verify_self_integrity() {
 } // namespace strenc::v2
 
 // ============================================================================
-// Macros
+// Public API
 // ============================================================================
-
-#define STRENC_V2_CONCAT_IMPL(a,b) a##b
-#define STRENC_V2_CONCAT(a,b) STRENC_V2_CONCAT_IMPL(a,b)
-
-#define STRENC_V2_COMPUTE_KEYS() \
-    (strenc::v2::default_compile_unit_keys(__FILE__, __TIME__, __COUNTER__))
 
 // Create encrypted string (V2 with multi-layer encryption)
 #define ENC_STR_V2(lit) \
     ([]() constexpr -> strenc::v2::EncryptedStringV2<sizeof(lit)> { \
-        return strenc::v2::EncryptedStringV2<sizeof(lit)>(lit, STRENC_V2_COMPUTE_KEYS()); \
+        return strenc::v2::EncryptedStringV2<sizeof(lit)>(lit, strenc::v2::default_compile_unit_keys(__FILE__, __TIME__, __COUNTER__)); \
     }())
 
 // Decrypt with custom variable name
 #define AUTO_DECRYPT_VAR_V2(var_name, enc) \
-    strenc::v2::DecryptGuardV2 STRENC_V2_CONCAT(_strenc_guard_, __LINE__) \
-        ((enc).data(), (enc).size(), (enc).compile_keys_); \
-    strenc::v2::DecryptGuardV2& var_name = STRENC_V2_CONCAT(_strenc_guard_, __LINE__)
+    strenc::v2::DecryptGuardV2<256u> var_name((enc).data(), (enc).size(), (enc).compile_keys_)
 
 // Decrypt with default _dec_ variable name
 #define AUTO_DECRYPT_V2(enc) AUTO_DECRYPT_VAR_V2(_dec_, enc)
+
+#endif // STRENC_ENCRYPTED_STRING_V2_H

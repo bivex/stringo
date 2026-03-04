@@ -6,46 +6,59 @@
  * For up-to-date contact information:
  * https://github.com/bivex
  *
- * Created: 2026-03-04 15:52
- * Last Updated: 2026-03-04 15:52
+ * Created: 2026-03-04 15:11
+ * Last Updated: 2026-03-04 15:11
  *
  * Licensed under the MIT License.
  * Commercial licensing available upon request.
  */
 
-// Пример тестов для encrypted_string.h
+/**
+ * @file tests.cpp
+ * @brief Test suite for encrypted_string.h
+ */
+
 #include "encrypted_string.h"
 #include <iostream>
-#include <cassert>
+#include <cstdint>
 #include <cstring>
 
-// Макрос: определяет тест, использует ENC_STR и AUTO_DECRYPT и делает проверки
+// Test macro: creates a test function
 #define DEFINE_ENC_TEST(name, literal) \
     void test_##name() { \
         constexpr auto enc = ENC_STR(literal); \
-        /* 1) raw bytes differ от оригинала (для непустых строк) */ \
-        constexpr size_t literal_len = sizeof(literal) - 1; \
-        if (literal_len > 0) { \
-            bool obf = enc.is_obfuscated_against(literal, literal_len); \
-            assert(obf && "String must be obfuscated in binary"); \
+        constexpr std::size_t literal_len = sizeof(literal) - 1u; \
+        \
+        if (literal_len > 0u) { \
+            const bool obf = enc.is_obfuscated_against(literal, literal_len); \
+            if (!obf) { \
+                std::cerr << "FAILED: String must be obfuscated in binary" << std::endl; \
+                std::exit(1); \
+            } \
         } \
-        /* 2) при расшифровке внутри области - получим исходную строку */ \
+        \
         { \
-            strenc::DecryptGuard g(enc.data(), enc.size(), enc.key_); \
-            assert(std::strcmp(g.c_str(), literal) == 0 && "Decrypted value must match original"); \
+            strenc::DecryptGuard<256u> g(enc.data(), enc.size(), enc.key_); \
+            const int cmp_result = std::strcmp(g.c_str(), literal); \
+            if (cmp_result != 0) { \
+                std::cerr << "FAILED: Decrypted value must match original" << std::endl; \
+                std::exit(1); \
+            } \
         } \
-        /* 3) после выхода из области, данные в enc остаются зашифрованными (проверяем снова) */ \
-        if (literal_len > 0) { \
-            bool obf2 = enc.is_obfuscated_against(literal, literal_len); \
-            assert(obf2 && "Encrypted data must remain obfuscated"); \
+        \
+        if (literal_len > 0u) { \
+            const bool obf2 = enc.is_obfuscated_against(literal, literal_len); \
+            if (!obf2) { \
+                std::cerr << "FAILED: Encrypted data must remain obfuscated" << std::endl; \
+                std::exit(1); \
+            } \
         } \
     }
 
-// Примеры тестов
-DEFINE_ENC_TEST(hello, "Hello, world!");
-DEFINE_ENC_TEST(empty, ""); // пустая строка (задача: поддержать)
+// Test cases
+DEFINE_ENC_TEST(hello, "Hello, world!")
+DEFINE_ENC_TEST(empty, "")
 
-// Запуск всех тестов
 int main() {
     test_hello();
     test_empty();
