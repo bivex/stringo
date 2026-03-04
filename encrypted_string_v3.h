@@ -43,9 +43,12 @@ namespace strenc::v3 {
 template <std::size_t N = 256u>
 class DecryptGuardV3 {
 public:
-    DecryptGuardV3(const std::uint8_t* const enc_data, const std::size_t len, const ::strenc::v2::DualKeys& compile_keys)
+    explicit DecryptGuardV3(
+        const std::uint8_t* const enc_data,
+        const std::size_t len,
+        const ::strenc::v2::DualKeys& compile_keys)
         : len_(len), compile_keys_(compile_keys), rt_key_(::strenc::v2::derive_runtime_key()),
-          uses_stack_(len_ + 1u <= STRENC_STACK_THRESHOLD), heap_buf_(nullptr) {
+          uses_stack_((len_ + 1u) <= STRENC_STACK_THRESHOLD), heap_buf_(nullptr) {
 
         char* buf = nullptr;
         if (uses_stack_) {
@@ -57,16 +60,16 @@ public:
         buf_ptr_ = buf;
 
 #if STRENC_ENABLED
-        for (std::size_t i = 0u; i < len; ++i) {
+        for (std::size_t idx = 0u; idx < len; ++idx) {
             const char decrypted = static_cast<char>(
-                ::strenc::v2::decrypt_byte(enc_data[i], compile_keys_.key1, compile_keys_.key2, i)
+                ::strenc::v2::decrypt_byte(enc_data[idx], compile_keys_.key1, compile_keys_.key2, idx)
             );
 
 #if STRENC_MEM_OBFUSCATE
-            const std::uint8_t key_byte = static_cast<std::uint8_t>((rt_key_ >> (i * 8u)) & 0xFFu);
-            buf[i] = decrypted ^ static_cast<char>(key_byte);
+            const std::uint8_t key_byte = static_cast<std::uint8_t>((rt_key_ >> (idx * 8u)) & 0xFFu);
+            buf[idx] = decrypted ^ static_cast<char>(key_byte);
 #else
-            buf[i] = decrypted;
+            buf[idx] = decrypted;
 #endif
         }
 #else
@@ -92,10 +95,10 @@ public:
         static thread_local std::size_t temp_heap_size = 0u;
 
         char* out = nullptr;
-        if (len_ + 1u <= STRENC_STACK_THRESHOLD) {
+        if ((len_ + 1u) <= STRENC_STACK_THRESHOLD) {
             out = temp_buf;
         } else {
-            if (temp_heap_size < len_ + 1u) {
+            if (temp_heap_size < (len_ + 1u)) {
                 delete[] temp_heap;
                 temp_heap = new char[len_ + 1u];
                 temp_heap_size = len_ + 1u;
@@ -103,9 +106,9 @@ public:
             out = temp_heap;
         }
 
-        for (std::size_t i = 0u; i < len_; ++i) {
-            const std::uint8_t key_byte = static_cast<std::uint8_t>((rt_key_ >> (i * 8u)) & 0xFFu);
-            out[i] = buf_ptr_[i] ^ static_cast<char>(key_byte);
+        for (std::size_t idx = 0u; idx < len_; ++idx) {
+            const std::uint8_t key_byte = static_cast<std::uint8_t>((rt_key_ >> (idx * 8u)) & 0xFFu);
+            out[idx] = buf_ptr_[idx] ^ static_cast<char>(key_byte);
         }
         out[len_] = '\0';
         return out;
@@ -118,31 +121,31 @@ public:
         return std::string(c_str());
     }
 
-    std::uint32_t runtime_key() const noexcept {
+    [[maybe_unused]] std::uint32_t runtime_key() const noexcept {
         return rt_key_;
     }
 
-    bool is_on_stack() const noexcept {
+    [[maybe_unused]] bool is_on_stack() const noexcept {
         return uses_stack_;
     }
 
 private:
-    std::size_t len_;
-    ::strenc::v2::DualKeys compile_keys_;
-    std::uint32_t rt_key_;
-    bool uses_stack_;
+    const std::size_t len_;
+    const ::strenc::v2::DualKeys compile_keys_;
+    [[maybe_unused]] const std::uint32_t rt_key_;
+    const bool uses_stack_;
     char* buf_ptr_;
     char stack_buf_[STRENC_STACK_THRESHOLD];
     char* heap_buf_;
 
-    void secure_zero() {
+    void secure_zero() noexcept {
         volatile char* p = uses_stack_ ? stack_buf_ : heap_buf_;
         const std::size_t total = len_ + 1u;
 
         for (std::size_t pass = 0u; pass < 3u; ++pass) {
             const char pattern = (pass == 1u) ? static_cast<char>(0xAA) : 0;
-            for (std::size_t i = 0u; i < total; ++i) {
-                p[i] = pattern;
+            for (std::size_t idx = 0u; idx < total; ++idx) {
+                p[idx] = pattern;
             }
         }
 
@@ -157,13 +160,16 @@ private:
 template <std::size_t N = 256u>
 class DecryptGuardV3Fast {
 public:
-    DecryptGuardV3Fast(const std::uint8_t* const enc_data, const std::size_t len, const ::strenc::v2::DualKeys& compile_keys)
+    explicit DecryptGuardV3Fast(
+        const std::uint8_t* const enc_data,
+        const std::size_t len,
+        const ::strenc::v2::DualKeys& compile_keys)
         : len_(len) {
 
 #if STRENC_ENABLED
-        for (std::size_t i = 0u; i < len; ++i) {
-            buf_[i] = static_cast<char>(
-                ::strenc::v2::decrypt_byte(enc_data[i], compile_keys.key1, compile_keys.key2, i)
+        for (std::size_t idx = 0u; idx < len; ++idx) {
+            buf_[idx] = static_cast<char>(
+                ::strenc::v2::decrypt_byte(enc_data[idx], compile_keys.key1, compile_keys.key2, idx)
             );
         }
 #else
@@ -174,8 +180,8 @@ public:
 
     ~DecryptGuardV3Fast() {
         volatile char* p = buf_;
-        for (std::size_t i = 0u; i < len_ + 1u; ++i) {
-            p[i] = 0;
+        for (std::size_t idx = 0u; idx < (len_ + 1u); ++idx) {
+            p[idx] = 0;
         }
     }
 
@@ -191,7 +197,7 @@ public:
     }
 
 private:
-    std::size_t len_;
+    const std::size_t len_;
     char buf_[N + 1u];
 };
 

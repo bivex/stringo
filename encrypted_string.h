@@ -71,19 +71,24 @@ namespace strenc {
     constexpr std::int32_t STRENC_ENABLED = 0;
 #endif
 
+// FNV-1a prime and offset basis
+constexpr std::uint32_t FNV_OFFSET_BASIS = 2166136261u;
+constexpr std::uint32_t FNV_PRIME = 16777619u;
+
 // constexpr rotate-left (32-bit)
-constexpr std::uint32_t rotl32(std::uint32_t v, std::uint32_t r) {
-    r &= 31u;
-    return (r != 0u) ? ((v << r) | (v >> (32u - r))) : v;
+constexpr std::uint32_t rotl32(const std::uint32_t v, const std::uint32_t r) noexcept {
+    const std::uint32_t masked_r = r & 31u;
+    return (masked_r != 0u) ? ((v << masked_r) | (v >> (32u - masked_r))) : v;
 }
 
 // constexpr hash function from string
-constexpr std::uint32_t constexpr_hash(const char* s, std::size_t n) {
-    std::uint32_t h = 2166136261u;
-    for (std::size_t i = 0u; i < n; ++i) {
-        h = (h ^ static_cast<std::uint32_t>(static_cast<std::uint8_t>(s[i]))) * 16777619u;
+constexpr std::uint32_t constexpr_hash(const char* const s, const std::size_t n) noexcept {
+    std::uint32_t hash_value = FNV_OFFSET_BASIS;
+    for (std::size_t idx = 0u; idx < n; ++idx) {
+        const std::uint32_t char_val = static_cast<std::uint32_t>(static_cast<std::uint8_t>(s[idx]));
+        hash_value = (hash_value ^ char_val) * FNV_PRIME;
     }
-    return h;
+    return hash_value;
 }
 
 // Encryption: out[i] = in[i] ^ (rotl32(key, i) + i)
@@ -95,18 +100,19 @@ struct EncryptedString {
     std::size_t size_;
     std::uint32_t key_;
 
-    constexpr EncryptedString(const char (&s)[N], std::uint32_t key)
+    constexpr explicit EncryptedString(const char (&s)[N], const std::uint32_t key)
         : data_{}, size_(N - 1u), key_(key) {
 
 #if STRENC_ENABLED
-        for (std::size_t i = 0u; i < N; ++i) {
-            const std::uint8_t b = static_cast<std::uint8_t>(s[i]);
-            const std::uint8_t kbyte = static_cast<std::uint8_t>((rotl32(key, i) + i) & 0xFFu);
-            data_[i] = b ^ kbyte;
+        for (std::size_t idx = 0u; idx < N; ++idx) {
+            const std::uint8_t byte_val = static_cast<std::uint8_t>(s[idx]);
+            const std::uint32_t rotl_val = rotl32(key, idx);
+            const std::uint8_t kbyte = static_cast<std::uint8_t>((rotl_val + idx) & 0xFFu);
+            data_[idx] = byte_val ^ kbyte;
         }
 #else
-        for (std::size_t i = 0u; i < N; ++i) {
-            data_[i] = static_cast<std::uint8_t>(s[i]);
+        for (std::size_t idx = 0u; idx < N; ++idx) {
+            data_[idx] = static_cast<std::uint8_t>(s[idx]);
         }
 #endif
     }
@@ -119,13 +125,13 @@ struct EncryptedString {
         return data_.data();
     }
 
-    bool is_obfuscated_against(const char* orig, std::size_t orig_len) const {
+    bool is_obfuscated_against(const char* const orig, const std::size_t orig_len) const {
 #if STRENC_ENABLED
         if (orig_len != size_) {
             return true;
         }
-        for (std::size_t i = 0u; i < size_; ++i) {
-            if (data_[i] != static_cast<std::uint8_t>(orig[i])) {
+        for (std::size_t idx = 0u; idx < size_; ++idx) {
+            if (data_[idx] != static_cast<std::uint8_t>(orig[idx])) {
                 return true;
             }
         }
@@ -139,27 +145,39 @@ struct EncryptedString {
 };
 
 // Key generation factory
-constexpr std::uint32_t default_compile_unit_key(const char* file, const char* time, std::int32_t counter) {
-    const std::uint32_t h1 = constexpr_hash(file, std::char_traits<char>::length(file));
-    const std::uint32_t h2 = constexpr_hash(time, std::char_traits<char>::length(time));
-    return h1 ^ h2 ^ static_cast<std::uint32_t>(counter * 0x9e3779b9);
+constexpr std::uint32_t default_compile_unit_key(
+    const char* const file,
+    const char* const time_str,
+    const std::int32_t counter) noexcept {
+
+    const std::uint32_t file_len = std::char_traits<char>::length(file);
+    const std::uint32_t time_len = std::char_traits<char>::length(time_str);
+    const std::uint32_t h1 = constexpr_hash(file, static_cast<std::size_t>(file_len));
+    const std::uint32_t h2 = constexpr_hash(time_str, static_cast<std::size_t>(time_len));
+
+    const std::uint32_t counter_val = static_cast<std::uint32_t>(counter);
+    return (h1 ^ h2) ^ (counter_val * 0x9e3779b9u);
 }
 
 // Decryption result structure (stack-allocated to avoid dynamic memory)
 template <std::size_t N = 256u>
 class DecryptGuard {
 public:
-    DecryptGuard(const std::uint8_t* const enc_data, const std::size_t len, const std::uint32_t key)
+    explicit DecryptGuard(
+        const std::uint8_t* const enc_data,
+        const std::size_t len,
+        const std::uint32_t key)
         : len_(len), key_(key) {
 
 #if STRENC_ENABLED
-        for (std::size_t i = 0u; i < len; ++i) {
-            const std::uint8_t kbyte = static_cast<std::uint8_t>((rotl32(key_, i) + i) & 0xFFu);
-            buf_[i] = static_cast<char>(enc_data[i] ^ kbyte);
+        for (std::size_t idx = 0u; idx < len; ++idx) {
+            const std::uint32_t rotl_val = rotl32(key_, idx);
+            const std::uint8_t kbyte = static_cast<std::uint8_t>((rotl_val + idx) & 0xFFu);
+            buf_[idx] = static_cast<char>(static_cast<char>(enc_data[idx] ^ kbyte));
         }
 #else
-        for (std::size_t i = 0u; i < len; ++i) {
-            buf_[i] = static_cast<char>(enc_data[i]);
+        for (std::size_t idx = 0u; idx < len; ++idx) {
+            buf_[idx] = static_cast<char>(enc_data[idx]);
         }
 #endif
         buf_[len] = '\0';
@@ -181,13 +199,13 @@ public:
     }
 
 private:
-    std::size_t len_;
-    std::uint32_t key_;
+    const std::size_t len_;
+    [[maybe_unused]] const std::uint32_t key_;
     char buf_[N + 1u];
 
-    void secure_zero() {
-        for (std::size_t i = 0u; i < len_ + 1u; ++i) {
-            buf_[i] = 0;
+    void secure_zero() noexcept {
+        for (std::size_t idx = 0u; idx < (len_ + 1u); ++idx) {
+            buf_[idx] = 0;
         }
     }
 };
